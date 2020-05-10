@@ -3,7 +3,7 @@ Signature="$CHICAGO$"
 Class=MEDIA
 Provider=%SCR%
 ClassGUID={4d36e96c-e325-11ce-bfc1-08002be10318}
-DriverVer = 04/27/2020,17.31.13.480
+DriverVer = 05/10/2020,18.34.18.476
 CatalogFile=scream.cat
 
 [SourceDisksNames]
@@ -90,3 +90,4 @@ KSNAME_Wave="Wave"
 KSNAME_Topology="Topology"
 
 MediaCategories="SYSTEM\CurrentControlSet\Control\MediaCategories"
+
