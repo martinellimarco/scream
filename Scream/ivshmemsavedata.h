@@ -20,6 +20,8 @@
 #define IOCTL_IVSHMEM_REQUEST_SIZE   CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_IVSHMEM_REQUEST_MMAP   CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_IVSHMEM_RELEASE_MMAP   CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_IVSHMEM_RING_DOORBELL  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_IVSHMEM_REQUEST_KMAP   CTL_CODE(FILE_DEVICE_UNKNOWN, 0x806, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 //-----------------------------------------------------------------------------
 //  Forward declaration
@@ -41,6 +43,13 @@ typedef struct _IVSHMEM_SAVEWORKER_PARAM {
 typedef IVSHMEM_SAVEWORKER_PARAM *PIVSHMEM_SAVEWORKER_PARAM;
 #include <poppack.h>
 
+typedef struct IVSHMEM_RING
+{
+	UINT16         peerID;  // the id of the peer to ring
+	UINT16         vector;  // the doorbell to ring
+}
+IVSHMEM_RING, *PIVSHMEM_RING;
+
 typedef struct IVSHMEM_MMAP
 {
     UINT16         peerID;  // our peer id
@@ -59,7 +68,7 @@ typedef struct IVSHMEM_OBJECT
     UINT8  offset;    //position of the 1st chunk
     UINT16 maxChunks; //how many chunks
     UINT32 chunkSize; //the size of a chunk
-    UINT32 bufferSize; 
+    UINT32 bufferSize;
 }
 IVSHMEM_OBJECT, *PIVSHMEM_OBJECT;
 
@@ -74,6 +83,9 @@ typedef struct IVSHMEM_SCREAM_HEADER
     UINT8  sampleSize;
     UINT8  channels;
     UINT16 channelMap;
+	LARGE_INTEGER timer_frequency = {};
+	LARGE_INTEGER timestamp = {};
+	UINT16 peerID;
 }
 IVSHMEM_SCREAM_HEADER, *PIVSHMEM_SCREAM_HEADER;
 
@@ -122,6 +134,9 @@ private:
 
     BOOLEAN                     RequestMMAP();
     void                        ReleaseMMAP();
+	void						RingDoorbell(UINT16 peerID);
+
+	void                        ClearHeader(PIVSHMEM_SCREAM_HEADER header);
 };
 typedef CIVSHMEMSaveData *PCIVSHMEMSaveData;
 

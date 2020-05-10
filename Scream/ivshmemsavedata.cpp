@@ -19,6 +19,22 @@
 //=============================================================================
 
 //=============================================================================
+void CIVSHMEMSaveData::ClearHeader(PIVSHMEM_SCREAM_HEADER header) {
+	//we can't use RtlZeroMemory because we need to preserve the peer ID
+	header->magic = 0;
+	header->writeIdx = 0;
+	header->offset = 0;
+	header->maxChunks = 0;
+	header->chunkSize = 0;
+	header->sampleRate = 0;
+	header->sampleSize = 0;
+	header->channels = 0;
+	header->channelMap = 0;
+	header->timer_frequency = {};
+	header->timestamp = {};
+}
+
+//=============================================================================
 BOOLEAN CIVSHMEMSaveData::RequestMMAP() {
 	if (!m_ivshmem.devObj) {
 		return FALSE;
@@ -41,6 +57,7 @@ BOOLEAN CIVSHMEMSaveData::RequestMMAP() {
             KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, NULL);
         }
         if (ioStatus.Status == 0) {
+			m_ivshmem.mmap.ptr = (PBYTE)m_ivshmem.mmap.ptr;
             return TRUE;
         }
         else {
@@ -82,6 +99,42 @@ void CIVSHMEMSaveData::ReleaseMMAP() {
     else {
         DPF_ENTER(("IVSHMEM: Failed to get the IRP for RELEASE_MMAP\n"));
     }
+}
+
+//=============================================================================
+void CIVSHMEMSaveData::RingDoorbell(UINT16 peerID) {
+	if (!m_ivshmem.devObj) {
+		return;
+	}
+
+	IO_STATUS_BLOCK ioStatus = { 0 };
+	KEVENT event;
+	KeInitializeEvent(&event, NotificationEvent, FALSE);
+
+	IVSHMEM_RING ring;
+	ring.peerID = peerID;
+	ring.vector = 0;
+
+	PIRP irp = IoBuildDeviceIoControlRequest(
+		IOCTL_IVSHMEM_RING_DOORBELL,
+		m_ivshmem.devObj,
+		&ring, sizeof(IVSHMEM_RING),
+		NULL, 0,
+		FALSE,
+		&event,
+		&ioStatus
+	);
+	if (irp) {
+		if (IoCallDriver(m_ivshmem.devObj, irp) == STATUS_PENDING) {
+			KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, NULL);
+		}
+		if (ioStatus.Status != 0) {
+			DPF_ENTER(("IVSHMEM: IRP for RING_DOORBELL failed with status %u\n", ioStatus.Status));
+		}
+	}
+	else {
+		DPF_ENTER(("IVSHMEM: Failed to get the IRP for RING_DOORBELL\n"));
+	}
 }
 
 //=============================================================================
@@ -191,7 +244,7 @@ CIVSHMEMSaveData::~CIVSHMEMSaveData() {
             m_ivshmem.initialized = false;
             if (RequestMMAP()) {
                 //set to 0 the header so the receiver know we terminated
-                RtlZeroMemory(m_ivshmem.mmap.ptr, sizeof(IVSHMEM_SCREAM_HEADER));
+				ClearHeader((PIVSHMEM_SCREAM_HEADER)m_ivshmem.mmap.ptr);
             }
             ReleaseMMAP();
         }
@@ -257,9 +310,10 @@ NTSTATUS CIVSHMEMSaveData::Initialize(DWORD nSamplesPerSec, WORD wBitsPerSample,
     if (RequestMMAP()) {
         PIVSHMEM_SCREAM_HEADER hdr = (PIVSHMEM_SCREAM_HEADER)m_ivshmem.mmap.ptr;
 
-        RtlZeroMemory(hdr, sizeof(IVSHMEM_SCREAM_HEADER));
+		ClearHeader(hdr);
+
         m_ivshmem.writeIdx = 0;
-        hdr->offset = m_ivshmem.offset = (UINT8)sizeof(IVSHMEM_SCREAM_HEADER);
+		hdr->offset = m_ivshmem.offset = (UINT8)sizeof(IVSHMEM_SCREAM_HEADER);
         hdr->chunkSize = m_ivshmem.chunkSize;
         hdr->maxChunks = m_ivshmem.maxChunks = (UINT16)(m_ivshmem.mmap.size / m_ivshmem.chunkSize);
         m_ivshmem.bufferSize = m_ivshmem.chunkSize*m_ivshmem.maxChunks;
@@ -270,10 +324,10 @@ NTSTATUS CIVSHMEMSaveData::Initialize(DWORD nSamplesPerSec, WORD wBitsPerSample,
         hdr->channels = (UINT8)(nChannels);
         hdr->channelMap = (UINT16)(dwChannelMask);
 
+		KeQueryPerformanceCounter(&hdr->timer_frequency);
         hdr->magic = MAGIC_NUM;
         m_ivshmem.initialized = true;
-    }
-    else {
+    } else {
         m_ivshmem.initialized = false;
     }
     ReleaseMMAP();
@@ -322,7 +376,7 @@ void CIVSHMEMSaveData::IVSHMEMSendData() {
     }
 
     PIVSHMEM_SCREAM_HEADER hdr = (PIVSHMEM_SCREAM_HEADER)m_ivshmem.mmap.ptr;
-    
+
     while (1) {
         // Read latest storeOffset. There might be new data.
         storeOffset = m_ulOffset;
@@ -337,7 +391,9 @@ void CIVSHMEMSaveData::IVSHMEMSendData() {
                 m_ivshmem.writeIdx = 0;
             }
             RtlCopyMemory(&mmap[m_ivshmem.writeIdx*m_ivshmem.chunkSize], &m_pBuffer[m_ulSendOffset], m_ivshmem.chunkSize);
+			hdr->timestamp = KeQueryPerformanceCounter(NULL);
             hdr->writeIdx = m_ivshmem.writeIdx;
+			RingDoorbell(hdr->peerID);
         }
 
         m_ulSendOffset += m_ivshmem.chunkSize; if (m_ulSendOffset >= m_ivshmem.bufferSize) m_ulSendOffset = 0;
